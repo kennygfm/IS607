@@ -1,0 +1,86 @@
+---
+title: "Data607.Homework2.KenMarkus"
+author: "Ken Markus"
+date: "February 7, 2016"
+output: html_document
+---
+
+#The Assignment
+Very often, we’re tasked with taking data in one form and transforming it for easier downstream analysis. Over the next few weeks, we’ll work with several packages that help with the tasks of tidying and transforming data.
+
+#Solution
+
+I opted to leverage data on online video encoding. The information is available at:
+https://archive.ics.uci.edu/ml/datasets/Online+Video+Characteristics+and+Transcoding+Time+Dataset
+
+```{r}
+theUrl="https://raw.githubusercontent.com/kennygfm/IS607/master/Week%202/online_video_dataset/transcoding_mesurment.tsv"
+#Load all of the data into encodingm_data
+encoding_data <- read.table(file = theUrl, header = TRUE, sep = "\t")
+```
+
+Below are some commands that I used to examine the file, note that the data dictionary is available at the same url above, and we will be paying attention to the second data file which include input and output video characteristics along with their transcoding time and memory resource requirements while transcoding videos to diffrent but 
+valid formats.
+
+```{r}
+str(encoding_data)
+names(encoding_data)
+```
+
+Reviewing the data dictionary and the data, we will limit our analysis to see if there is a relationship between the original encoding and file size with the output encoding and processing time. Note that the exact same machine is used for all the calculations so issues with processor speed and memory are immaterial. Also note that we have no idea if these are driving factors relative to the other variables in the data. Ideally we learn how to identify those in a statistics course. We will keep the number of rows for now, because it is not a huge number of observations: **```r nrow(encoding_data)```*
+
+```{r}
+encoding_data_limit <- na.omit(encoding_data[,c("codec","size","o_codec","utime")])
+```
+
+One would assume that file size plays a huge factor in transcoding time, so we will examine that variable first and create a new column that classifies the files into five groups.
+
+```{r}
+summary(encoding_data_limit$size)
+hist(encoding_data_limit$size)
+breaks <- quantile(encoding_data_limit$size,c(0.1,0.25,0.5,0.75,0.9))
+f <- cut(encoding_data_limit$size, breaks, labels=c("Bottom","Mid-Low","Mid-High","Top-most"))
+summary(f)
+tapply(encoding_data_limit$size, f, median)
+#Let's append this information to the data frame so we can apply some interesting pivots
+encoding_data_limit$size_group <- f
+```
+
+Now that we have a factor by which we can look at group file size, we can more readily see the impact on transcoding time.
+
+```{r}
+# Table on encoding time based on file size
+tapply(encoding_data_limit$utime, f, median)
+
+#Table on encoding time based on file size and input encoding
+tapply(encoding_data_limit$utime, list(f,encoding_data_limit$codec), median)
+
+#Table on encoding time based on file size and output encoding
+tapply(encoding_data_limit$utime, list(f,encoding_data_limit$o_codec), median)
+```
+
+What the above tables show is how little impact file size has on encoding time. A surprise for yours truly actually! It seems the more significant variable is simply the output codec.
+```{r}
+#Table on on encoding time based on input vs. output encoding time
+tapply(encoding_data_limit$utime, list(encoding_data_limit$codec,encoding_data_limit$o_codec), median)
+
+#Table on encoding time based on all three other variables
+tapply(encoding_data_limit$utime, list(f,encoding_data_limit$codec,encoding_data_limit$o_codec), median)
+```
+
+The tables of course are useful, let's make sure median was the right call and review all the outliers via boxplot visualizations.
+```{r}
+#boxplot(Horsepower ~ Origin, data=Cars93)
+boxplot(encoding_data_limit$utime)
+boxplot(encoding_data_limit$utime ~ f)
+boxplot(encoding_data_limit$utime ~ encoding_data_limit$codec)
+boxplot(encoding_data_limit$utime ~ encoding_data_limit$o_codec)
+boxplot(encoding_data_limit$utime ~ encoding_data_limit$o_codec+encoding_data_limit$codec, horizontal=TRUE)
+```
+
+From this, it becomes clearer that the output codec has the most significant impact on processing time. So, we can further limit our data to the slowest output file time (h264) and provide advanced analysis on the original dataframe based on that.
+```{r}
+encoding_data_limit2 <- na.omit(encoding_data[encoding_data$o_codec=="h264",])
+```
+
+This leaves us with new data to explore (at another time), to identify potentially other variables that drive up processing time.
