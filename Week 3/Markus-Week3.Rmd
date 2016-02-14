@@ -1,0 +1,64 @@
+---
+title: "Markus-Assignment3"
+author: "Ken Markus"
+date: "February 13, 2016"
+output: html_document
+---
+
+#Assignment – Combining Data from Multiple Sources
+
+Your task is to create an R dataframe that shows rates of tuberculosis infection by country. You should use the information from the tb database and the attached population.csv file. Your R dataframe should have the following columns: Country, Year, Rate
+
+```{r include=FALSE}
+
+#install.packages("dplyr")
+library(plyr)
+library(dplyr)
+library(knitr)
+```
+
+Our first step will be to load the data and clean up the dataframe a bit.
+
+```{r tidy=TRUE, results="hide"}
+#Load the TB data
+theUrl="https://raw.githubusercontent.com/kennygfm/IS607/master/Week%203/tb.csv"
+
+#Load all of the data into tb_data
+tb_data <- read.table(file = theUrl, header = FALSE, sep = ",", col.names = c("country","year","sex","child","adult","elderly"))
+
+#Fix some data elements so we can collapse sex,child,adult,elderly information
+tb_data <- tb_data[tb_data$child != -1,]
+tb_data <- tb_data[tb_data$adult != -1,]
+tb_data <- tb_data[tb_data$elderly != -1,]
+
+#Create a new column that contains a total of TB Cases
+tb_data$cases <- tb_data$child + tb_data$adult + tb_data$elderly
+
+#Load all the Population data
+theUrl="https://raw.githubusercontent.com/kennygfm/IS607/master/Week%203/population.csv"
+population_data <- read.table(file = theUrl, header = TRUE, sep = ",")
+```
+
+Now that we have loaded both files into two separate dataframes, we must now merge (join) them. R has a simple merge function to enable this.
+
+```{r tidy=TRUE, results="hide"}
+#Merge the two dataframes
+tb_combined <- merge(population_data, tb_data, by=c("country","year"))
+```
+
+Finally, we must calculate the actual rate as the code below illustrates. Note that we are opting to display rate in per million people given the relatively low frequency.
+
+```{r tidy=TRUE, results="hide"}
+#This dataframe can reveal to us the rate by the parameters sex,child,adult,elderly
+#Let's create a new dataframe that condenses all of that information, and then calculate the rate
+tb_rate <- ddply(tb_combined, .(country,year,population),summarize,total_cases=sum(cases))
+
+#Now, let's calculate the rate, in cases per million
+tb_rate$rate <- 1000000 * tb_rate$total_cases / tb_rate$population
+tb_rate <- tb_rate[order(tb_rate$country,tb_rate$year),]
+```
+
+And the output is...
+```{r}
+kable(subset(tb_rate, select = c("country","year","rate")), digits=2)
+```
