@@ -1,0 +1,82 @@
+---
+title: "IS 607 Project 1"
+author: "Ken Markus"
+date: "February 27, 2016"
+output: html_document
+---
+```{r}
+#Clear the environment - just make things neater
+rm(list=ls())
+
+#Load the necessary libraries
+library(stringr)
+theUrl <- "https://raw.githubusercontent.com/kennygfm/IS607/master/tournamentinfo.txt"
+raw <- read.table(theUrl,header=FALSE,sep="\n")
+
+#We know the first 4 rows are irrelvant
+nr <- nrow(raw)
+raw <- data.frame(raw[5:nr,])
+
+nr <- nrow(raw)-2
+
+#Define the data frame that will host the tournament information
+players <- data.frame(id = numeric(0), name = character(0), state = character(0), points = numeric(0), rating = numeric(0), opponents = character(0), stringsAsFactors = FALSE)
+
+#Our first step is to read in all of the data, and enter it into a dataframe
+#Note that for purposes beyond the project we would creatae function to do this
+for(i in 1:nr)
+{
+  top_row <- as.character(raw[i,])
+  second_row <- as.character(raw[i+1,])
+  
+  #Cull the ID
+  pair_id <- str_extract(top_row, "[:space:]+[:digit:]+|")
+  pair_id <- as.numeric(str_extract(pair_id,"[[:digit:]]+"))
+  
+  if (is.na(pair_id)) {
+    pair_id <- top_row
+    next
+  }
+  #Cull the name
+  pname <- str_extract(top_row, "[[:alpha:]].+?[|]")
+  pname <- str_trim(str_replace_all(pname,"[|]",""))
+  
+  #Cull the state
+  state <- str_extract(second_row, "[[:alpha:]].+?[|]")
+  state <- str_trim(str_replace_all(state,"[|]",""))
+  
+  #Cull the total number of points
+  points <- str_extract(top_row, "[|][:digit:][:punct:][:digit:]")
+  points <- str_trim(str_replace_all(points,"[|]",""))
+  
+  #Cull the Pre-rating
+  rating <- str_extract(second_row,"R:[:space:]+[:digit:]+")
+  rating <- as.numeric(str_extract(rating,"[[:digit:]]+"))
+  
+  #Cull the IDs of the opponents
+  opponents <- as.character(str_extract_all(top_row,"[WDL]{1}[:space:]+[:digit:]+"))
+  
+  #Fill the dataframe
+  players <- rbind(players,data.frame(id=pair_id, name=pname, state=state, points=points, rating=rating, opponents=opponents))
+}
+#Convert factors back to characters
+i <- sapply(players, is.factor)
+players[i] <- lapply(players[i], as.character)
+
+#Our next step is to calculate the average score of the opponents. 
+#Again, beyond this project we would make this into a separate function
+nr <- nrow(players)
+for(i in 1:nr) {
+  opponents <- unlist(str_extract_all(players[i,'opponents'], "[WDL]{1}[:space:]+[:digit:]+"))
+  
+  o_total <- 0
+  for(j in 1:length(opponents)) {
+    o_id <- as.numeric(str_extract(opponents[j],"[[:digit:]]+"))
+    o_rating <- players[players$id==o_id, 'rating']
+    o_total <- o_total + o_rating
+  }
+  o_average <- round(o_total / length(opponents), digits = 0)
+  players[i,'opponents'] <- as.character(o_average)
+}
+players <- players[,-1] 
+write.csv(players, file = "Project1.csv")
