@@ -4,12 +4,22 @@ author: "Ken Markus"
 date: "February 27, 2016"
 output: html_document
 ---
+In this project, you’re given a text file with chess tournament results where the information has some structure. Your
+job is to create an R Markdown file that generates a .CSV file (that could for example be imported into a SQL database)
+with the following information for all of the players:
+Player’s Name, Player’s State, Total Number of Points, Player’s Pre-Rating, and Average Pre Chess Rating of Opponents
+For the first player, the information would be:
+Gary Hua, ON, 6.0, 1794, 1605
+
+*Note that for this project we provide the R code in whole, rather than in bits and pieces via the markdown.*
+
 ```{r}
 #Clear the environment - just make things neater
 rm(list=ls())
 
 #Load the necessary libraries
 library(stringr)
+library(knitr)
 theUrl <- "https://raw.githubusercontent.com/kennygfm/IS607/master/tournamentinfo.txt"
 raw <- read.table(theUrl,header=FALSE,sep="\n")
 
@@ -80,3 +90,5 @@ for(i in 1:nr) {
 }
 players <- players[,-1] 
 write.csv(players, file = "Project1.csv")
+kable(players, digits = getOption("digits"), caption = "Players Table", escape = TRUE)
+```
