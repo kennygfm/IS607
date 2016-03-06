@@ -1,0 +1,61 @@
+---
+title: "IS 607 Week 5 Assignment"
+author: "Ken Markus"
+date: "March 6, 2016"
+output: html_document
+---
+#Assignment – Tidying and Transforming Data
+
+```{r}
+#Clear the environment - just make things neater
+rm(list=ls())
+
+#Load the necessary libraries
+#install.packages("devtools")
+#devtools::install_github("hadley/tidyr")
+
+library(tidyr)
+library(dplyr)
+library(stringr)
+
+#Load the data
+theUrl <- "https://raw.githubusercontent.com/kennygfm/IS607/master/NWAirlines.csv"
+raw <- read.csv(theUrl, header = TRUE)
+
+#First step is to rename the columns and flatten the data (destinations)
+tidy_raw <- raw %>% 
+  rename(Airline=X, ontime_flag=X.1) %>% 
+  gather("destination","freq",3:7) %>% 
+  filter(!is.na(freq)) 
+```
+
+Next step is to ensure that Airline name is never blank - I could not figure out how to do this any other way than the following leveraging a for loop. Ideally this would have been possible simply with tidyr or dplyr but I could not conceive of a way
+```{r}
+for(i in 1:nrow(tidy_raw)) {
+  if (i %% 2 == 0) {
+    tidy_raw$Airline[i] <- tidy_raw$Airline[i-1]
+  }
+}
+
+# We rename the observations because manipulating columns with whitespace in their name is onerous
+tidy_raw$ontime_flag <- str_replace(tidy_raw$ontime_flag," ","")
+```
+
+We should also spread out the rows since ontime and delays are arguably separate variables of the airline-destination observations
+```{r}
+tidy_raw <- tidy_raw %>% 
+  spread(ontime_flag,freq,fill=NA)
+```
+
+Let's do a little analysis and find out percent delayed
+```{r}
+mutate(tidy_raw, ontime_perc = round(100* ontime / (ontime + delayed),2))
+```
+
+Now let's see overall percentages as well
+```{r}
+tidy_raw %>% 
+  group_by(Airline) %>% 
+  summarise(ontime=sum(ontime),delayed=sum(delayed)) %>% 
+  mutate(ontime_perc = round(100* ontime / (ontime + delayed),2))
+```
