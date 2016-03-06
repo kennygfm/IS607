@@ -6,7 +6,7 @@ output: html_document
 ---
 #Assignment – Tidying and Transforming Data
 
-```{r}
+```{r include=FALSE}
 #Clear the environment - just make things neater
 rm(list=ls())
 
@@ -17,7 +17,10 @@ rm(list=ls())
 library(tidyr)
 library(dplyr)
 library(stringr)
+```
 
+First we'll load the data and do some basic clean-ups (tidying).
+```{r}
 #Load the data
 theUrl <- "https://raw.githubusercontent.com/kennygfm/IS607/master/NWAirlines.csv"
 raw <- read.csv(theUrl, header = TRUE)
@@ -47,9 +50,10 @@ tidy_raw <- tidy_raw %>%
   spread(ontime_flag,freq,fill=NA)
 ```
 
-Let's do a little analysis and find out percent delayed
+Let's do a little analysis and find out percent delayed and order by city, this way we can choose the airline with the preferred on-time percentage.
 ```{r}
-mutate(tidy_raw, ontime_perc = round(100* ontime / (ontime + delayed),2))
+mutate(tidy_raw, ontime_perc = round(100* ontime / (ontime + delayed),2)) %>% 
+  arrange(destination)
 ```
 
 Now let's see overall percentages as well
@@ -59,3 +63,5 @@ tidy_raw %>%
   summarise(ontime=sum(ontime),delayed=sum(delayed)) %>% 
   mutate(ontime_perc = round(100* ontime / (ontime + delayed),2))
 ```
+
+From this we can see that AM West has a slightly superior on-time percentage. 
