@@ -1,0 +1,167 @@
+---
+title: "IS 607 Week 6 Assignment"
+author: "Ken Markus"
+date: "March 6, 2016"
+output: html_document
+---
+#Assignment – Tidying and Transforming Data
+
+```{r include=FALSE}
+#Clear the environment - just make things neater
+rm(list=ls())
+
+#Load the necessary libraries
+#install.packages("devtools")
+devtools::install_github("hadley/tidyr")
+
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+
+#Some useful functions for data conversion (written by Ken)
+to_num <- function(var_col) {
+  var_col <- as.character(var_col)
+  var_col <- str_replace(var_col,"\\$","")
+  var_col <- str_replace_all(var_col,",","")
+  var_col <- str_replace_all(var_col,"\\%","")
+  var_col <- as.numeric(var_col)
+  return(var_col)
+}
+```
+
+##Wealth distribution in the US
+First we'll load the data and do some basic clean-ups (tidying).
+```{r}
+#Load the data
+theUrl <- "https://raw.githubusercontent.com/kennygfm/IS607/master/Wealth.csv"
+raw <- read.csv(theUrl, header = TRUE)
+
+#Let's rename the columns, we list each by row so it is more readable
+raw <-raw %>% 
+  rename(top1=Top.1.percent) %>% 
+  rename(next19=Next.19.percent) %>% 
+  rename(bottom80=Bottom.80.percent)
+
+#Next let's convert each column from a factor to a number
+raw$top1 <- to_num(raw$top1)
+raw$next19 <- to_num(raw$next19)
+raw$bottom80 <- to_num(raw$bottom80)
+
+#Let's gather the data so the observation includes which bracket rather than a separate column
+tidy_raw <- raw %>% 
+  gather("bracket","wealth_percent",2:4) 
+
+# Very basic bar graph
+ggplot(data=tidy_raw, aes(x=Year, y=wealth_percent, fill=bracket)) +
+  geom_bar(colour="black", stat="identity")
+```
+
+The analysis reveals graphically that little has changed with the distribution of wealth, if anything the bottom 80-percent have diminished their holdings relative to the top-20. Interestingly, the 1-percent have not seen substantive change either, albeit of course it very large.
+
+##NYC Analysis
+```{r}
+#Load the data
+theUrl <- "https://raw.githubusercontent.com/kennygfm/IS607/master/nyc.csv"
+raw <- read.csv(theUrl, header = TRUE)
+raw <- rename(raw, theYear=Year)
+```
+
+*Show leading cause of death each year for men*
+
+```{r}
+men <- raw %>% 
+  group_by(theYear,Cause.of.Death,Sex) %>% 
+  filter(Sex=="MALE") %>% 
+  summarise(total_count=sum(Count)) %>% 
+  arrange(theYear,desc(total_count))
+
+years <- data.frame(men$theYear)
+years <- distinct(years)
+
+cod1 <- data.frame(theYear=numeric(), cod=character(), total_count=numeric())
+
+for (i in 1:nrow(years)) {
+  men_y <- men %>% 
+    select(total_count,theYear,Cause.of.Death) %>% 
+    filter(theYear==years[i,1])
+  the_max <- max(men_y$total_count)
+  newrow <- select(men_y,theYear,cod=Cause.of.Death,total_count) %>% 
+    filter(total_count==the_max)
+  newrow$cod <- as.character(newrow$cod)
+  cod1 <- bind_rows(cod1, newrow)
+}
+
+#Output the results
+cod1
+```
+
+From the results we see that heart disease dominates for men in each year.
+
+*Which cause of death has declined the most?*
+```{r}
+cause_pivot <- raw %>% 
+  group_by(theYear,Cause.of.Death) %>% 
+  summarise(total_count=sum(Count)) %>% 
+  arrange(theYear)
+
+#Easiest way would be to spread the Cause of death as columns and review the differences
+cause_pivot <- spread(cause_pivot,Cause.of.Death,total_count)
+
+df <- data.frame(difference=numeric(), cod=character(), stringsAsFactors=FALSE)
+nr <- nrow(cause_pivot)
+for (i in 2:ncol(cause_pivot)){
+  diff <- as.numeric(cause_pivot[nr,i]-cause_pivot[1,i])
+  the_col <- as.character(colnames(cause_pivot)[i])
+  if (!is.na(diff)) {
+    newrow <- data.frame(difference=diff, cod=the_col)
+    df <- bind_rows(df,newrow)
+  }
+}
+the_min <- min(df$difference)
+select(df,cod,difference) %>% 
+  filter(difference==the_min)
+```
+From the results we can see that Diseases of the heart had the largest decline, at least in terms of raw numbers. We could of course calculate percentages do find which had the highest %age decline.
+
+##NBA Analysis
+```{r}
+rm(list=ls())
+theUrl <- "https://raw.githubusercontent.com/kennygfm/IS607/master/leagues_NBA_wins_active.csv"
+raw <- read.csv(theUrl, header = TRUE)
+
+#Remove unnecessary rows
+nba_data <- raw %>% 
+  filter(Rk != "Rk")
+
+nba_data <- nba_data %>% 
+  filter(Season!='Total')
+
+#Find the most overall wins in franchise history
+#Let's change the structure of the data so the nba team is a variable rather than a column
+tidy_nba <- gather(nba_data, "franchise", "wins", 4:33)
+tidy_nba$wins <- as.numeric(tidy_nba$wins)
+tidy_nba <- filter(tidy_nba, !is.na(wins))
+franchises <- data.frame(franchise=tidy_nba$franchise)
+franchises <- distinct(franchises)  
+
+df <- data.frame(Season=character(), franchise=character(), Lg=character(), wins=numeric())
+for (i in 1:nrow(franchises)) {
+  the_top <- tidy_nba %>% 
+    select(Season,franchise,Lg,wins) %>% 
+    filter(franchise==franchises$franchise[i])
+  the_max <- max(the_top$wins)
+  new_top <- the_top %>% 
+    select(Season,franchise,Lg,wins) %>% 
+    filter(wins==the_max)
+  df <- bind_rows(df, new_top)
+}
+#Let's sort the output from winning-most on down
+df <- arrange(df,desc(wins),franchise)
+df
+```
+
+A prettier version of the results:
+```{r, results='asis'}
+knitr::kable(df)
+```
