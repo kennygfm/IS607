@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<macro_books>
+        <book id=”1”>
+                <title>Macroeconomics 7th Ed.</title>
+                <author>Andrew Abel</author>
+                <author>Ben Bernanke</author>
+                <cost>$50</cost>
+                <politics>left</politics>
+        </book>
+        <book id=”2”>
+                <title>Macroeconomics 9th Ed.</title>
+                <author>N. Mankiw</author>
+                <cost>$60</cost>
+                <politics>right</politics>
+        </book>
+        <book id=”3”>
+                <title>Macroeconomics: Understanding the global economy</title>
+                <author>Andrew Scott</author>
+                <cost>$80</cost>
+                <politics>Centrist</politics>
+        </book>
+</macro_books>
