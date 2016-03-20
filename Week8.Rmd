@@ -1,0 +1,52 @@
+---
+title: "Assignment 8"
+author: "Ken Markus"
+date: "March 19, 2016"
+output: html_document
+---
+
+```{r include=FALSE}
+rm(list=ls())
+library(XML)
+library(stringr)
+```
+
+#HTML
+```{r}
+theFile <- "~/Downloads/books.html"
+books <- htmlParse(file = theFile)
+
+books.df <- readHTMLTable(books, header = TRUE, as.data.frame = TRUE)
+knitr::kable(books.df)
+
+```
+In this case we created a dataframe with a row that had no information other than an author. A problem indeed.
+
+#XML
+```{r}
+theFile <- "~/Downloads/books.xml"
+books <- xmlParse(file = theFile)
+
+#convert the a dataframe
+root <- xmlRoot(books)
+books.df <- xmlToDataFrame(root)
+knitr::kable(books.df)
+```
+
+As we can see from the above, there are limitations with the parsing of XML, in that our author information is empty given that they are attributes. We would have to write explicit functions to pull the information and contain it.
+
+#JSON
+```{r}
+library(RJSONIO)
+theFile <- "~/Downloads/books.json"
+isValidJSON(theFile)
+books <- fromJSON(content = theFile)
+
+#Convert to a dataframe
+library(plyr)
+books.unlist <- sapply(books[[1]], unlist)
+books.df <- do.call("rbind.fill", lapply(lapply(books.unlist, t), data.frame, stringsAsFactors = FALSE))
+knitr::kable(books.df)
+```
+
+The JSON results may be the best of all our dataframe conversions. However even here it is not perfect as we created an excessive amount of columns in order to collect the author information.
