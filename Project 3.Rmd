@@ -1,0 +1,173 @@
+---
+title: "Data Science Skills"
+author: "Ken Markus"
+date: "March 19, 2016"
+output: html_document
+---
+#Project 
+W. Edwards Deming said, “In God we trust, all others must bring data.” Please use data to answer the question,
+“Has there been growth in alternatives to traditional TV, and has that impacted advertising?” Consider your work as an exploration; there is not necessarily a “right
+answer.”
+
+```{r include=FALSE}
+rm(list=ls())
+
+#install.packages("devtools")
+#install.packages(c("RCurl", "XML")) 
+#options(pkgType="source")
+#setRepositories() # select Omegahat
+#install.packages("RHTMLForms", repos = "http://www.omegahat.net/R", type = "source")
+devtools::install_github("hadley/tidyr")
+
+library(tidyr)
+library(dplyr)
+library(XML)
+library(stringr)
+library(ggplot2)
+library(RCurl)
+library(RHTMLForms)
+```
+
+We will first review data which came from emarketer.com. Unfortunately this data is not accessible without password access, so for this assignment we included the downloaded csv file on github.
+
+```{r}
+#Read the first set of data
+url <- "https://raw.githubusercontent.com/kennygfm/IS607/master/ovu.csv"
+raw <- read.csv(url, header = TRUE)
+
+#Remove blanks
+index <- !raw$Format == ""
+raw <- raw[index,]
+
+#Reformat for individual observations
+raw <- gather(raw, "year", "growth", 2:7)
+
+#Rename and reformat the dataframe
+raw$year <- str_replace(raw$year,"X","")
+raw$year <- as.numeric(raw$year)
+
+index <- !is.na(as.numeric(raw$growth))
+raw <- raw[index,]
+raw$growth <- as.numeric(raw$growth)
+raw <- rename(raw,population=growth)
+raw <- arrange(raw,Format)
+```
+
+Let's make a graph of the data
+```{r}
+g <- ggplot(raw, aes(x=year, y=population, colour=Format)) + geom_line()
+g
+
+```
+
+This information is not very useful given the amount of formats. It might be interesting to see all of this collected in a bar graph.
+
+```{r}
+g <- ggplot(raw, aes(x=year, y=population)) + geom_bar(stat = "identity", position = "stack", aes(fill = Format))
+g
+```
+
+These results help with the visualization, however there remains too much noise. We are only interested in TV-watching behavior, so we will filter the results. Note that OTT is a synonym for connected TV.
+
+```{r}
+index <- str_detect(raw$Format, "TV") | str_detect(raw$Format, "OTT")
+raw_tv <- raw[index,]
+index <- !str_detect(raw_tv$Format, "Households")
+raw_tv <- raw_tv[index,]
+
+g <- ggplot(raw_tv, aes(x=year, y=population, colour=Format)) + geom_line()
+g
+g <- ggplot(raw_tv, aes(x=year, y=population)) + geom_bar(stat = "identity", position = "stack", aes(fill = Format))
+g
+```
+
+These visuals help a great deal, taking a look at annualized growth over these six years would also illuminate the projections.
+
+```{r}
+raw_tv_p <- spread(raw_tv, year, population) %>% 
+  mutate(growth=round(100*(`2019`/`2014` -1)^(1/5),2)) %>% 
+  arrange(growth)
+knitr::kable(raw_tv_p)
+```
+
+Now we can see that growth is fairly significant all cases with Connected TV showing the most yoy annualized growth.
+
+While this information is useful, we would like to see how video advertising has been impacted by this trend. We found one site, Comscore, which has some information on this. Unfortunately, perhaps purposefully, we will have to read a number of files to get some sort of time-wise trending. Basically we will have to parse through press releases and cull the appropriate html tables that are included. A scraping project for sure!
+
+```{r}
+url <- "http://www.comscore.com/Insights/Rankings/comScore-Releases-February-2016-US-Desktop-Online-Video-Rankings"
+parsed_doc <- htmlParse(url)
+# Check and see the class type for the doc
+class(parsed_doc)
+
+# We know the document has a table with the information we seek
+tables <- getNodeSet(parsed_doc, "//table")
+```
+
+We must inspect the output from all the tables to identify the relevant one.
+```{r}
+tables
+
+#Upon review we see that it is the first table in the document
+top_video = readHTMLTable(parsed_doc, which = 1)
+
+#Remove the first two rows and rename the columns
+top_video <- top_video[3:nrow(top_video),]
+top_video <- rename(top_video, property=V1, uniques=V2)
+top_video$uniques <- str_replace(top_video$uniques,",","")
+top_video$uniques <- as.numeric(top_video$uniques)
+top_video$property <- as.character(top_video$property)
+
+#Add a few more columns to describe the data
+top_video$year <- 2016
+top_video$month <- 'February'
+
+#Re-order
+top_video <- top_video %>% arrange(uniques)
+sum(top_video$uniques)
+
+#Now let's do the same from 6 months ago so we can get a sense of growth
+
+url <- "http://www.comscore.com/Insights/Rankings/comScore-Releases-August-2015-US-Desktop-Online-Video-Rankings"
+parsed_doc <- htmlParse(url)
+
+# We know the document has a table with the information we seek
+tables <- getNodeSet(parsed_doc, "//table")
+
+#Upon review we see that it is the first table in the document
+top_video2 = readHTMLTable(parsed_doc, which = 1)
+
+#Remove the first two rows and rename the columns
+top_video2 <- top_video2[3:nrow(top_video2),]
+top_video2 <- rename(top_video2, property=V1, uniques=V2)
+top_video2$uniques <- str_replace(top_video2$uniques,",","")
+top_video2$uniques <- as.numeric(top_video2$uniques)
+top_video2$property <- as.character(top_video2$property)
+
+top_video2$year <- 2015
+top_video2$month <- 'August'
+top_video2 <- top_video2 %>% arrange(uniques)
+sum(top_video2$uniques)
+
+top_videos <- bind_rows(top_video, top_video2)
+top_videos <- arrange(top_videos, year, desc(uniques))
+```
+
+Note that unfortunately we were unable to pull data from one year ago, this was because the data was not in an html-formatted table. Rather the table was created via javascript, and I was unable to figure out a fast way to read from those tables.
+
+We can see the output clearly here:
+```{r}
+knitr::kable(top_videos)
+```
+
+While this is interesting we may want to compare yoy growth for each site:
+```{r}
+top_videos_wide <- top_videos %>% 
+  select(property,year,uniques) %>% 
+  spread(year,uniques) %>% 
+  mutate(growth=round(100*(`2016`/`2015`-1),2)) %>% 
+  arrange(desc(growth))
+knitr::kable(top_videos_wide)
+```
+
+The above data illustrates a few interesting items. For one, in a small span of time a number of sites dropped and jumped from being in the top 10 video ads-provided sites. It is very fascinating to see a **drop** in impressions in Facebook for this lucrative ad format, and a very slow growth for Google. This suggests that other sites are increasing their competitiveness in this field.
