@@ -1,0 +1,270 @@
+---
+title: "Document Classification Model"
+author: "Ken Markus"
+date: "April 9, 2016"
+output: html_document
+---
+
+```{r include=FALSE}
+#Load all the appropriate libraries
+
+#install.packages("tm")
+#install.packages("SnowballC")
+#install.packages("RWeka")
+#install.packages("RTextTools")
+library(RTextTools)
+library(RWeka)
+library(tm)
+library(SnowballC)
+library(RCurl)
+library(XML)
+library(stringr)
+
+rm(list=ls())
+```
+It can be useful to be able to classify new "test" documents using already classified "training" documents.  A common example is using a corpus of labeled spam and ham (non-spam) e-mails to predict whether or not a new document is spam.  
+
+For this project, you can start with a spam/ham dataset, then predict the class of new documents (either withheld from the training dataset or from another source such as your own spam folder).   One example corpus:  https://spamassassin.apache.org/publiccorpus/
+
+#Step 1: Read the spam files
+```{r}
+file_dir_spam <- "~/Desktop/Spamham/spam/"
+file_names_spam <- list.files(file_dir_spam)
+```
+
+#Step 2: Create the corpus
+```{r}
+tmp <- readLines(str_c(file_dir_spam, file_names_spam[1]))
+tmp <- str_c(tmp, collapse = "")
+txt_corpus <- Corpus(VectorSource(tmp))
+meta(txt_corpus[[1]], "classification") <- "spam"
+
+n <- 1
+for (i in 2:length(file_names_spam)) {
+  tmp <- readLines(str_c(file_dir_spam, file_names_spam[i]))
+  tmp <- str_c(tmp, collapse = "")
+  
+    n <- n + 1
+    tmp_corpus <- Corpus(VectorSource(tmp))
+    txt_corpus <- c(txt_corpus, tmp_corpus)
+    meta(txt_corpus[[n]], "classification") <- "spam"
+}
+txt_corpus
+```
+
+#Step 3: Read the non-spam files, append to the corpus
+```{r}
+file_dir_ham <- "~/Desktop/Spamham/ham/"
+file_names_ham <- list.files(file_dir_ham)
+
+for (i in 1:length(file_names_ham)) {
+  tmp <- readLines(str_c(file_dir_ham, file_names_ham[i]))
+  tmp <- str_c(tmp, collapse = "")
+  
+ 
+    n <- n + 1
+    tmp_corpus <- Corpus(VectorSource(tmp))
+    txt_corpus <- c(txt_corpus, tmp_corpus)
+    meta(txt_corpus[[n]], "classification") <- "ham"
+  
+}
+txt_corpus
+```
+
+#Step 4: Create the term document matrix
+```{r}
+txt_corpus <- tm_map(txt_corpus, removeNumbers)
+txt_corpus <- tm_map(txt_corpus, content_transformer(str_replace_all), pattern = "[[:punct:]]", replacement = " ")
+txt_corpus <- tm_map(txt_corpus, removeWords, words = stopwords("en"))
+txt_corpus <- tm_map(txt_corpus, content_transformer(tolower))
+txt_corpus <- tm_map(txt_corpus, stemDocument)
+
+tdm <- TermDocumentMatrix(txt_corpus)
+tdm
+# From the above we can see we have quite a lot of sparse terms.
+
+tdm <- removeSparseTerms(tdm, 1-(10/length(txt_corpus)))
+tdm
+
+#Creating bigram matrix - we may not need this...
+BigramTokenizer <- function(x){
+  NGramTokenizer(x, Weka_control(min = 2, max = 2))}
+
+dtm <- DocumentTermMatrix(txt_corpus)
+dtm <- removeSparseTerms(dtm, 1-(10/length(txt_corpus)))
+```
+
+#Step 5: Enable the classification and test
+```{r}
+#First we will apply the test to the current set of documents. One thing we may opt to do is have the entire current dtm be the trainsize and read a new set of files to apply the test
+
+classification_labels <- unlist(meta(txt_corpus, "classification"))
+N <- length(classification_labels)
+container <- create_container(dtm,
+                              labels = classification_labels,
+                              trainSize = 1:1100,
+                              testSize = 1101:n,
+                              virgin = FALSE)
+
+slotNames(container)
+
+#We will opt to test all three methods, as we did in the textbook
+svm_model <- train_model(container, "SVM")
+tree_model <- train_model(container, "TREE")
+maxent_model <- train_model(container, "MAXENT")
+
+svm_out <- classify_model(container, svm_model)
+tree_out <- classify_model(container, tree_model)
+maxent_out <- classify_model(container, maxent_model)
+
+head(svm_out)
+head(tree_out)
+
+labels_out <- data.frame(
+  correct_label = classification_labels[1101:n],
+  svm = as.character(svm_out[,1]),
+  tree = as.character(tree_out[,1]),
+  maxent = as.character(maxent_out[,1]),
+  stringAsFactors = F)
+
+#ensure the dataframe does not have factor columns
+labels_out$svm <- as.character(labels_out$svm)
+labels_out$tree <- as.character(labels_out$tree)
+labels_out$maxent <- as.character(labels_out$maxent)
+
+#SVM Performance
+table(labels_out[,1] == labels_out[,2])
+
+#TREE Performance
+table(labels_out[,1] == labels_out[,3])
+
+#MAXENT Performance
+table(labels_out[,1] == labels_out[,4])
+```
+
+Wow! From the observations it is clear that the TREE method is far superior to SVM or MAXENT in this case. Let's see what happens if we have more sample data, before we apply to another set...
+
+```{r}
+classification_labels <- unlist(meta(txt_corpus, "classification"))
+N <- length(classification_labels)
+container <- create_container(dtm,
+                              labels = classification_labels,
+                              trainSize = 1:1800,
+                              testSize = 1801:n,
+                              virgin = FALSE)
+
+slotNames(container)
+
+#We will opt to test all three methods, as we did in the textbook
+svm_model <- train_model(container, "SVM")
+tree_model <- train_model(container, "TREE")
+maxent_model <- train_model(container, "MAXENT")
+
+svm_out <- classify_model(container, svm_model)
+tree_out <- classify_model(container, tree_model)
+maxent_out <- classify_model(container, maxent_model)
+
+head(svm_out)
+head(tree_out)
+
+labels_out <- data.frame(
+  correct_label = classification_labels[1801:n],
+  svm = as.character(svm_out[,1]),
+  tree = as.character(tree_out[,1]),
+  maxent = as.character(maxent_out[,1]),
+  stringAsFactors = F)
+
+#ensure the dataframe does not have factor columns
+labels_out$svm <- as.character(labels_out$svm)
+labels_out$tree <- as.character(labels_out$tree)
+labels_out$maxent <- as.character(labels_out$maxent)
+
+#SVM Performance
+table(labels_out[,1] == labels_out[,2])
+
+#TREE Performance
+table(labels_out[,1] == labels_out[,3])
+
+#MAXENT Performance
+table(labels_out[,1] == labels_out[,4])
+```
+
+Interestingly, MAXENT outperformed in this case, and not surprisingly the variance was lower
+
+#Step 6: Try this with emails from my personal account
+```{r}
+#Note that anyone can download these email messages on github at: https://github.com/kennygfm/IS607/blob/master/gbrella.2016-04-10T13-14-35.466Z.zip
+file_dir_spam <- "~/Desktop/Spamham/cuny_spam/"
+file_names_spam <- list.files(file_dir_spam)
+
+for (i in 1:length(file_names_spam)) {
+  tmp <- readLines(str_c(file_dir_spam, file_names_spam[i]))
+  tmp <- str_c(tmp, collapse = "")
+  
+ 
+    n <- n + 1
+    tmp_corpus <- Corpus(VectorSource(tmp))
+    txt_corpus <- c(txt_corpus, tmp_corpus)
+    meta(txt_corpus[[n]], "classification") <- "spam"
+}
+
+txt_corpus <- tm_map(txt_corpus, removeNumbers)
+txt_corpus <- tm_map(txt_corpus, content_transformer(str_replace_all), pattern = "[[:punct:]]", replacement = " ")
+txt_corpus <- tm_map(txt_corpus, removeWords, words = stopwords("en"))
+txt_corpus <- tm_map(txt_corpus, content_transformer(tolower))
+txt_corpus <- tm_map(txt_corpus, stemDocument)
+
+tdm <- TermDocumentMatrix(txt_corpus)
+tdm <- removeSparseTerms(tdm, 1-(10/length(txt_corpus)))
+
+dtm <- DocumentTermMatrix(txt_corpus)
+dtm <- removeSparseTerms(dtm, 1-(10/length(txt_corpus)))
+
+#We will apply the same technique and we can use the entire provided data set to create our learning
+#Let's see what happens if we have more sample data, before we apply to another set...
+classification_labels <- unlist(meta(txt_corpus, "classification"))
+N <- length(classification_labels)
+container <- create_container(dtm,
+                              labels = classification_labels,
+                              trainSize = 1:1900,
+                              testSize = 1901:n,
+                              virgin = FALSE)
+
+slotNames(container)
+
+#We will opt to test all three methods, as we did in the textbook
+svm_model <- train_model(container, "SVM")
+tree_model <- train_model(container, "TREE")
+maxent_model <- train_model(container, "MAXENT")
+
+svm_out <- classify_model(container, svm_model)
+tree_out <- classify_model(container, tree_model)
+maxent_out <- classify_model(container, maxent_model)
+
+head(svm_out)
+head(tree_out)
+
+labels_out <- data.frame(
+  correct_label = classification_labels[1901:n],
+  svm = as.character(svm_out[,1]),
+  tree = as.character(tree_out[,1]),
+  maxent = as.character(maxent_out[,1]),
+  stringAsFactors = F)
+
+#ensure the dataframe does not have factor columns
+labels_out$svm <- as.character(labels_out$svm)
+labels_out$tree <- as.character(labels_out$tree)
+labels_out$maxent <- as.character(labels_out$maxent)
+
+#SVM Performance
+table(labels_out[,1] == labels_out[,2])
+
+#TREE Performance
+table(labels_out[,1] == labels_out[,3])
+
+#MAXENT Performance
+table(labels_out[,1] == labels_out[,4])
+```
+#Amazing! In this case we were 100% accurate...
+This is better than the results I even expected. If anyone was wondering, all of those files were indeed spam imho.
+
