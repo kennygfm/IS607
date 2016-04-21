@@ -1,0 +1,60 @@
+---
+title: "NoSQL Assignment IS607"
+author: "Ken Markus"
+date: "April 21, 2016"
+output: html_document
+---
+#Assignment
+
+For Project 4, you should take information from a relational database and migrate it to a NoSQL database of your own choosing. 
+
+For the relational database, you might use the flights database, the tb database, the "data skills" database your team created for Project 3, or another database of your own choosing or creation.
+
+For the NoSQL database, you may use MongoDB, Neo4j (which we introduce in Week 12), or another NoSQL database of your choosing.
+
+ Your migration process needs to be reproducible.  R code is encouraged, but not required.  You should also briefly describe the advantages and disadvantages of storing the data in a relational database vs. your NoSQL database.
+
+#Solution
+
+I opted to take tb database, with the given sql for the relational database. Note that we leveraged a MySQL instance.
+
+In terms of migration, I opted for a graphs database using neo4j. 
+
+The scripts are as follows (note that these are reproducible in any neo4j instance):
+
+##Create the nodes
+```{r eval=FALSE}
+LOAD CSV WITH HEADERS FROM "https://raw.githubusercontent.com/kennygfm/IS607/master/Week%203/population.csv" AS population
+CREATE (a:Population {country: population.country, year: toInt(population.year), population: toInt(population.population)})
+RETURN a
+
+LOAD CSV FROM "https://raw.githubusercontent.com/kennygfm/IS607/master/Week%203/tb_cases.csv" AS line
+CREATE (b:Cases { country: line[0], year: toInt(line[1]), gender: line[2], cases: toInt(line[3])})
+RETURN b
+```
+
+Note that we did not necessarily need to return the results, I simply did that to validate the results.
+
+#Define the relationship
+```{r eval=FALSE}
+MATCH (a1:Population), (b1:Cases)
+WHERE a1.country = b1.country AND a1.year = b1.year
+CREATE (a1)-[r:CONTAINS]->(b1)
+```
+
+Thankfully (for me, someone very familiar with SQL syntax), we can have compounded WHERE clauses. Something I was not sure of in the tutorials. I will add that this language is more intuitive than traditional SQL.
+
+#Output query results
+```{r eval=FALSE}
+MATCH (a3:Population)-->(b3:Cases) RETURN a3.country, a3.year, a3. population, b3.gender, b3.cases
+```
+
+Again, all of the above code is reproducible in a neo4j instance. I saved the output into a csv, available on github at: https://github.com/kennygfm/IS607/blob/master/NoSql_TB_export.csv
+
+#Comparisons
+
+I am very new to Graphs database, and have 4+ years of experience with relational databases (although that was 10+ years ago). From what I experienced, graphs databases are actually more intuitive, and were that my first exposure to databases I would probably prefer it. One thing I noticed as I worked through the assignment is the language is definitely more flexible, and I can see adding or removing relationships as much easier than how we define relationships with foreign keys in RDBMs. A huge advantage!
+
+On the flip side the ecosystem is relatively immature and thus learning materials are weaker. I suspect learning traditional RDBMs will be a lot easier until the literature and software around Graph databases improve.
+
+I know there are other benefits form the readings (e.g. scalability and flexibility), but not necessarily obvious from the assignment of course.
