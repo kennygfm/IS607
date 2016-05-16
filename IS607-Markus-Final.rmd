@@ -1,0 +1,414 @@
+---
+title: "Final Project for IS 607"
+output: 
+  html_document:
+    css: ~/Downloads/lab.css
+    highlight: pygments
+    theme: cerulean
+---
+## Part 1 - Introduction:
+
+Ideally I hope to create a model wherein I can forecast demand for an operations team devoted to trafficking video ads. Currently an operations team I manage experiences significant variance of incoming volumes and has no means of predicting that variance. This often causes a backlog and requires teams to work extra hours because staffing levels (onshore and offshore) are often inappropriate (both over and under capacity).
+
+The brunt of the data to analyze will come from historical demand for the services (located in a Jira database, often output to a csv), and also leverage forecasted future demand from a Salesforce database. In the project I hope to map variance of past demand and ideally identify the driving factors that can be leading indicators
+
+
+```{r set-options, echo=FALSE, cache=FALSE}
+# To clear a Global Environemnt
+rm(list =ls())
+
+# Load the necessary packages
+#install.packages("devtools")
+#devtools::install_github("hadley/tidyr")
+#install.packages("googlesheets")
+#install.packages("qcc")
+library(dplyr)
+library(tidyr)
+require(dplyr)
+library(ggplot2)
+require(ggplot2)
+library(ggthemes)
+require(ggthemes)
+require(lubridate)
+require(stringr)
+library(reshape2)
+
+library("googlesheets")
+suppressMessages(library(dplyr))
+
+library("qcc")
+
+#function that returns an approximation of the percentile - the %-age of a list, the_list that is less than a value, val
+getPercentile <- function(val, the_list) {
+  val <- max(val)
+  the_list <- the_list[order(the_list)]
+  rv <- 0
+  val <- as.numeric(val)
+  for (i in 1:length(the_list)) {
+    if (val >= the_list[i]) {
+      rv <- i / length(the_list)
+    } 
+  }
+  return(rv)
+}
+```
+
+## Part 2a - Data, Initial Set-up for Operational data from Jira
+
+Jira offers a workflow orchestration tool, wherein 'tasks' enter a queue and are either taken or explicitly assigned to agents. More information on Jira is available at https://www.atlassian.com/software/jira
+
+```{r load_data}
+# Let's load all the operational data at the highest level
+
+
+# Read in the first data file -- push this to github...
+url <- "https://raw.githubusercontent.com/kennygfm/IS607/master/April27RawPull.csv"
+raw <- read.csv(url, header=TRUE, stringsAsFactors=FALSE, fileEncoding="latin1")
+
+# Remove all the non-essential rows - for purposes here this would be queues that are not relevant to a task assignment
+index <- str_detect(raw$Issue.Type, "Creative")
+raw$Issue.Type[index] <- "Creative swap"
+
+index <- str_detect(raw$Issue.Type, "Campaign")
+raw$Issue.Type[index] <- "Campaign launch"
+
+index <- str_detect(raw$Issue.Type, "Companion")
+raw$Issue.Type[index] <- "Companion Banner Update"
+
+index <- str_detect(raw$Issue.Type, "New placement")
+raw$Issue.Type[index] <- "New placement"
+
+index <- str_detect(raw$Issue.Type, "QQ")
+raw$Issue.Type[index] <- "QQ item"
+
+index <- raw$Issue.Type == "QQ item" | raw$Issue.Type == "Creative swap" | raw$Issue.Type == "New placement" | raw$Issue.Type == "Campaign launch"
+raw <- raw[index,]
+
+index <- raw$Agency != "#N/A"
+raw <- raw[index,]
+
+#reindex the rows for future manipulations
+rownames(raw) <- 1:nrow(raw)
+
+# Add a new column that indicates the time spent for a task (TTR)
+# Get tasktime (ensure it is in hours)
+raw$tasktime <-as.numeric(as.POSIXct(as.character(raw$Resolved), tz = "", format="%m/%d/%Y %H:%M")) - as.numeric(as.POSIXct(as.character(raw$Created), tz = "", format="%m/%d/%Y %H:%M"))
+raw$tasktime <-round(raw$tasktime/60/60,2)
+
+#Identify and eliminate rows with NA
+index <- !is.na(raw$tasktime)
+raw <- raw[index,]
+rownames(raw) <- 1:nrow(raw)
+
+#Fix some known data issues
+raw$Advertiser[(raw$Queue=='P&G' & raw$Advertiser=='J')] <- 'P&G'
+
+# Convert to datetime variables integers and create new columns
+raw$ResolvedNum <- as.numeric(as.POSIXct(as.character(raw$Resolved), tz = "", format="%m/%d/%Y %H:%M"))
+raw$CreatedNum <- as.numeric(as.POSIXct(as.character(raw$Created), tz = "", format="%m/%d/%Y %H:%M"))
+raw$ResolvedDate <- as.POSIXct(as.character(raw$Resolved), tz = "", format="%m/%d/%Y")
+raw$CreatedDate <- as.POSIXct(as.character(raw$Created), tz = "", format="%m/%d/%Y")
+raw$CreatedWeekDay <- as.numeric(wday(raw$CreatedDate))
+raw$ResolvedWeekDay <- as.numeric(wday(raw$ResolvedDate))
+raw$Month <- months(as.POSIXct(as.character(raw$Created), tz = "", format="%m/%d/%Y %H:%M"))  
+raw$hour <- as.numeric(str_replace(str_replace(str_extract(raw$Created, " [[:digit:]]+:"), pattern = ":", replacement = ""), pattern= " ", replacement = ""))
+
+# R has the week start on Sunday, but for our purposes it is easier to have the first day on Saturday
+raw$CreatedWeekDay[raw$CreatedWeekDay == 7] <- 0
+raw$ResolvedWeekDay[raw$ResolvedWeekDay == 7] <- 0
+
+
+# If task was completed between a weekend, we should ensure that those hours are removed
+index <- raw$CreatedWeekDay > raw$ResolvedWeekDay
+raw$tasktime[index] <- raw$tasktime[index] - 48 
+rownames(raw) <- 1:nrow(raw)
+
+# Rename relevant columns
+raw <- rename(raw, AdOpsQueue=Issue.Type)
+raw <- rename(raw, SLA=Innovid.SLA)
+
+#SLA should be numeric type
+index <- (raw$AdOpsQueue=="QQ item" & str_detect(raw$SLA, "N"))
+raw$SLA[index] <- "24"
+
+index <- (raw$AdOpsQueue=="New placement" & str_detect(raw$SLA, "N"))
+raw$SLA[index] <- "48"
+
+index <- (raw$AdOpsQueue=="Creative swap" & str_detect(raw$SLA, "N"))
+raw$SLA[index] <- "48"
+
+index <- (raw$AdOpsQueue=="Campaign launch" & str_detect(raw$SLA, "N"))
+raw$SLA[index] <- "72"
+
+raw$SLA <- as.numeric(raw$SLA)
+
+# Reorder the levels of the Month column
+raw$Month <- str_trim(raw$Month)
+
+#Fix some known data issues
+raw$Advertiser[(raw$Queue=='P&G' & raw$Advertiser=='J')] <- 'P&G'
+
+
+raw$Month <- factor(raw$Month, levels = c("June","July", "August", "September", "October", "November", "December", "January", "February", "March", "April"))
+
+#Fix an issue in the current file
+i <- is.na(raw$SLA)
+raw$SLA[i] <- 24
+
+ops_queue <- raw %>% group_by(AdOpsQueue, Queue, Agency, Advertiser, Month, SLA) %>% 
+  summarise(total_tasks=length(Queue),
+            mean=mean(tasktime),
+            median=median(tasktime),
+            tt10 = quantile(tasktime, .10), 
+            tt25 = quantile(tasktime, .25), 
+            tt50 = quantile(tasktime, 0.5),
+            tt75 = quantile(tasktime, 0.75),
+            tt90 = quantile(tasktime, 0.9),
+            percentile = 100 * getPercentile(SLA, tasktime)) %>% 
+  arrange(Agency, AdOpsQueue, Month)
+
+ops_queue <- data.frame(ops_queue)
+ops_queue <- ops_queue %>% arrange(AdOpsQueue)
+```
+
+## Part 2b - Data, Initial Set-up for Operational data from Salesforce
+
+As part of this project, we elected to learn something new, namely how to pull data from Google spreadsheets, leveraging the `googlesheets` package. This proved relatively easy, but we include code in case others are interested. I opted to output the data from our salesforce database into this format. Information on this package is available at: https://github.com/jennybc/googlesheets.
+
+```{r googlesheets, echo=TRUE}
+# Note that the data below is proprietary, so it will only be open for purposes of this project!
+# Not as easy as you would think, the spreadsheet must be 'published' in order to be accessed. Nonetheless, arguably this is simpler and more portable than Excel files or CSVs.
+
+u <- "https://docs.google.com/spreadsheets/d/17BWY9C2YZCtaxu2avGTUwGdN8GLc_AAjHpbHSJABp40/pubhtml"
+g <- gs_url(u, verbose = FALSE)
+sf_data <- g %>% gs_read(ws = "SFData")
+
+#Clean-up Regional data
+index <- sf_data$Region == "US - CENTRAL"
+sf_data$Region[index] <- "Central"
+
+index <- sf_data$Region == "US - EAST"
+sf_data$Region[index] <- "East"
+
+index <- sf_data$Region == "US - WEST"
+sf_data$Region[index] <- "West"
+
+sf_data <- arrange(sf_data, Region)
+```
+
+## Part 2c, The Data (Dictionary/Description)
+
+The support team in question uses a product called Jira that effectively enables production tickets to be created for an operations team to accomplish.
+
+The initial salesforce data has been loaded into the dataframe, `sf_data`. The main variables are defined below.
+
+variable        | description
+--------------- | ---------------
+`Year`          | The year of the forecasted number of campaigns
+`Month`         | The month of the forecasted number of campaigns
+`Agency`        | Name of the agency associated with the campaigns
+`Advertiser`    | Name of the advertiser associated with the campaigns
+`Region`        | Region of forecast
+`NewCampaigns` | Count of new campaigns forecasted for the particular month
+`TotalCampaigns` | Count of total campaigns forecasted for the particular month
+`NewiRoll` | Count of new iRoll campaigns forecasted for the particular month. iRolls are a specific, more advanced type of campaign
+`TotaliRoll`  | Count of total iRoll campaigns
+`NewIntegrations` | Count of campaigns which require integrations, these campaigns take longer to execute and thus would affect tasktime.
+`New3rdParty` | Count of campaigns which leverage 3rd party applications, these also take longer to execute.
+
+The initial operational data has been loaded into the dataframe, `raw`. We then performed a transform which summarized the data which was effectively continuous (from any point a task was submitted), into monthly data called `ops_queue`. The main variables are defined below.
+
+variable        | description
+--------------- | ---------------
+`AdOpsQueue`    | type of request, and to which queue request is directed: "QQ item", "Creative swap", "New placement", "Campaign launch"
+`Queue`         | client-specific vs. undedicated queue
+`Month`         | summmary statistic for month ticket was created
+`SLA`           | SLA (service level agreement), the desired time-to-complete for the particular task
+`Agency`        | name of advertising agency for specific ticket
+`Advertiser`    | name of brand for specific ticket
+`tastktime`     | total time (in hours) to resolve ticket, this is our output variable
+`tt10`          | The tasktime for the 10th percentile, the other variables `tt25`, `tt50`, `tt75`, `tt90` follow similarly
+`percentile`    | The percentage of total tasks completed within the SLA time
+
+#Graphical representation of the data
+Before we attempt to join the two data sources and make some predictive analysis we will review some important components of each data source visually leveraging the `ggplot` package.
+```{r first-plots, echo=TRUE}
+ggplot(ops_queue, aes(x = Month, y = total_tasks, fill = AdOpsQueue, xaxt = "n")) + geom_bar(stat="identity") + ggtitle("Task count time series") + xlab("Month") + ylab("Task Count") 
+
+ggplot(sf_data, aes(x = MonYear, y = TotalCampaigns, fill = Region, xaxt = "n")) + geom_bar(stat="identity") + ggtitle("Campaign count time series") + xlab("Month") + ylab("Campaign Count") 
+```
+
+Notice that we do not have the same periods of data, so we will cull from `sf_data` the additional periods of time.
+```{r data-cleanup, echo=TRUE}
+sf_data <- sf_data %>% filter((Month >= 6 & Year==2015) | Year==2016)
+sf_data$MonYear[sf_data$Month==6] <- "June"
+sf_data$MonYear[sf_data$Month==7] <- "July"
+sf_data$MonYear[sf_data$Month==8] <- "August"
+sf_data$MonYear[sf_data$Month==9] <- "September"
+sf_data$MonYear[sf_data$Month==10] <- "October"
+sf_data$MonYear[sf_data$Month==11] <- "November"
+sf_data$MonYear[sf_data$Month==12] <- "December"
+sf_data$MonYear[sf_data$Month==1] <- "January"
+sf_data$MonYear[sf_data$Month==2] <- "February"
+sf_data$MonYear[sf_data$Month==3] <- "March"
+sf_data$MonYear[sf_data$Month==4] <- "April"
+sf_data$MonYear <- factor(sf_data$MonYear, levels = c("June","July", "August", "September", "October", "November", "December", "January", "February", "March", "April"))
+
+ggplot(ops_queue, aes(x = Month, y = total_tasks, fill = AdOpsQueue, xaxt = "n")) + geom_bar(stat="identity") + ggtitle("Task count time series") + xlab("Month") + ylab("Task Count") 
+
+ggplot(sf_data, aes(x = MonYear, y = TotalCampaigns, fill = Region, xaxt = "n")) + geom_bar(stat="identity") + ggtitle("Campaign count time series") + xlab("Month") + ylab("Campaign Count") 
+```
+
+We shall review performance for specific agencies or advertisers. This may not ultimately be useful for our analysis, but we are curious nonetheless.
+```{r further-analysis, echo=TRUE}
+#Identify the Top Agencies by total amount of tasks
+rc <- ops_queue %>% 
+  group_by(Agency,Month) %>% 
+  summarise(total_tasks=sum(total_tasks)) %>% 
+  ungroup() %>% 
+  arrange(Month,desc(total_tasks))
+
+# Limit results to the most recent month
+rownames(rc) <- 1:nrow(rc)
+index <- rc$Month == 'April'
+rc <- rc[index,]
+
+rc <- arrange(rc, desc(total_tasks))
+
+
+# Plot top agencies overall so we get a sense of where specific agency below fits into the mix
+rc$Agency <- factor(rc$Agency, levels = rc$Agency)
+
+ggplot(rc[1:10,], aes(x = Agency, y = total_tasks, fill = Agency, xaxt = "n")) + geom_bar(stat="identity") + theme(legend.title=element_blank(), axis.text.x = element_blank()) + ggtitle("Top Agencies by Task Count") + xlab("Agency") + ylab("Task Count")
+
+#Identify to Agencies by new campaigns
+index <- is.na(sf_data$NewCampaigns)
+sf_data$NewCampaigns[index] <- 0
+
+nc <- sf_data %>% 
+  group_by(Agency, Month, Year) %>% 
+  summarise(new_campaigns=sum(NewCampaigns)) %>% 
+  ungroup() %>% 
+  arrange(Year, Month,desc(new_campaigns))
+
+# Limit results to the most recent month
+rownames(nc) <- 1:nrow(nc)
+index <- nc$Month == 4 & nc$Year == 2016
+nc <- nc[index,]
+
+nc <- arrange(nc, desc(new_campaigns))
+
+nc$Agency <- factor(nc$Agency, levels = nc$Agency)
+
+ggplot(nc[1:10,], aes(x = Agency, y = new_campaigns, fill = Agency, xaxt = "n")) + geom_bar(stat="identity") + theme(legend.title=element_blank(), axis.text.x = element_blank()) + ggtitle("Top Agencies by New campaigns") + xlab("Agency") + ylab("New Campaigns")
+
+#Identify to Agencies by total campaigns
+index <- is.na(sf_data$TotalCampaigns)
+sf_data$TotalCampaigns[index] <- 0
+
+tc <- sf_data %>% 
+  group_by(Agency, Month, Year) %>% 
+  summarise(total_campaigns=sum(TotalCampaigns)) %>% 
+  ungroup() %>% 
+  arrange(Year, Month,desc(total_campaigns))
+
+# Limit results to the most recent month
+rownames(tc) <- 1:nrow(tc)
+index <- tc$Month == 4 & tc$Year == 2016
+tc <- tc[index,]
+
+tc <- arrange(tc, desc(total_campaigns))
+
+tc$Agency <- factor(tc$Agency, levels = tc$Agency)
+
+tcc <- tc$total_campaigns
+names(tcc) <- tc$Agency
+
+#A pareto chart let's us see by how much each agency contributes to the total
+pareto.chart(tcc, ylab = "Agency", col=rainbow(length(tcc)))
+
+#Let's visualize the top 10, which represents a huge percentage of the total
+ggplot(tc[1:10,], aes(x = Agency, y = total_campaigns, fill = Agency, xaxt = "n")) + geom_bar(stat="identity") + theme(legend.title=element_blank(), axis.text.x = element_blank()) + ggtitle("Top Agencies by Total campaigns") + xlab("Agency") + ylab("Total Campaigns")
+
+```
+
+From these two charts we have uncovered the following:
+
+A. Task volume is not exactly the same as new campaign volume.
+B. The top few agencies are a significant source of the total volumes.
+
+
+While we now have the same time period, we need to transform the data such that all the information is on one row. We shall use the tidyr package to accomplish that. Note that we are doing so in the interest of simplicity, so we are ignoring Agency and Advertiser information for the analysis here. At some point in the future we may opt to have this.
+
+```{r transform-data, echo=TRUE}
+
+#Regroup the salesforce data so that it is flatter
+sfc <- sf_data %>% group_by(MonYear) %>% 
+  summarise(newcampaigns=sum(na.omit(NewCampaigns)), totalcampaigns=sum(na.omit(TotalCampaigns)), newiroll=sum(na.omit(NewiRoll)), totaliroll=sum(na.omit(TotaliRoll))) %>% 
+  ungroup() 
+sfc <- data.frame(sfc)
+
+#Regroup the ops queue data as well
+oq <- ops_queue %>% group_by(AdOpsQueue, Month) %>% 
+  summarise(total_tasks=sum(na.omit(total_tasks))) %>% 
+  ungroup() 
+oq <- data.frame(oq)
+oq <- spread(oq, AdOpsQueue, total_tasks)
+oq <- rename(oq, cs=`Creative swap`)
+oq <- rename(oq, cl=`Campaign launch`)
+oq <- rename(oq, np=`New placement`)
+oq <- rename(oq, qq=`QQ item`)
+oq <- rename(oq, MonYear=Month)
+
+cd <- full_join(sfc,oq, by = "MonYear")
+
+plot(cd$totalcampaigns, cd$np)
+plot(cd$totalcampaigns, cd$cs)
+plot(cd$totalcampaigns, cd$qq)
+plot(cd$totalcampaigns, cd$cl)
+
+plot(cd$newcampaigns, cd$np)
+plot(cd$newcampaigns, cd$cs)
+plot(cd$newcampaigns, cd$qq)
+plot(cd$newcampaigns, cd$cl)
+
+plot(cd$totaliroll, cd$np)
+plot(cd$totaliroll, cd$cs)
+plot(cd$totaliroll, cd$qq)
+plot(cd$totaliroll, cd$cl)
+```
+
+Based on the charts, it seems we are best-suited to predict two queue types, "New placements" and "Creative swaps". We will now attempt a few models on that.
+
+##The forecasts
+```{r models, echo=TRUE}
+#We'll start with a simple linear regression based on total campaigns and new placements
+m_ttr <- lm(np ~ totalcampaigns, data = cd)
+summary(m_ttr)
+```
+
+These results are stunning. When compared to the IS606 project (http://rpubs.com/kennygfm/180938), wherein we attempted to predict daily time-to-complete based on queue size (we only achieved and adjusted R-squared of 0.0966). Let's see if additional variables improve the situation.
+
+```{r more-models, echo=TRUE}
+m_ttr2 <- lm(np ~ totalcampaigns + totaliroll + newcampaigns + newiroll, data = cd)
+summary(m_ttr2)
+```
+
+These results show us the limitation of the model. So we will keep the simple linear case for the new placement queue, however we now know that the Salesforce data on total campaigns shall prove useful in predicting that queue.
+
+Let us review creative swaps next.
+```{r yet-more-models, echo=TRUE}
+m_ttr3 <- lm(cs ~ totalcampaigns + totaliroll + newcampaigns + newiroll, data = cd)
+summary(m_ttr3)
+
+m_ttr4 <- lm(cs ~ totalcampaigns + newiroll, data = cd)
+summary(m_ttr4)
+```
+
+Interestingly, with this data the multi-variate yields a better adjusted R-squared, albeit with low p-values for each but the total_campaigns variable.
+
+What is most interesting of all this, however, is that `newcampaigns` has proven to be a poor predictor of the "Campaign launch" queue. 
+
+##Conclusion 
+
+We were half-way successful. Of the four primary operations queues, salesforce data allows us to accurate predict for "New placements" and "Creative swaps". In practice this represents roughly 35% of total time spent. It was very unlikely that we would be able to predict "Quick queue" sizes, but the big, and disappointing, surprise was the we are unable to predict, with Salesforce data, new campaign queue volumes.
